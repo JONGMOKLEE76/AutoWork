@@ -712,7 +712,7 @@ def get_previous_weeklist(thisweek):
 
 def correct_gscp_data(today, frozen, vendor_list, ver):
     thisweek = get_weekname(today)
-    frozen_period = [get_weekname_from(thisweek, i) for i in range(frozen+1)]
+    frozen_period = [get_weekname_from(thisweek, i) for i in range(frozen+1)] # 확정 구간은 이번주를 포함하여 현재까지 확정되어 있는 주차들을 나타냄. 예를 들어 확정 구간 3주이면 당주 포함 총 4개 주차임
     previous_weeklist = get_previous_weeklist(thisweek)
     print(f'** {thisweek} 기준의 GSCP SP {ver} 로 작업합니다. 확정구간 : {frozen}주 **')
     sp_all = pd.read_excel(get_filename(), sheet_name=0, keep_default_na=False, na_values=['', 'nan']) # GSCP로부터 금주 SP를 데이타프레임화trim_column_name(sp)
@@ -755,9 +755,10 @@ def correct_gscp_data(today, frozen, vendor_list, ver):
             sp.loc[(x, y, 'SR'), z] = sr[(x,y,z)]
 
         # 3. 지난 주 기준의 Open PO 를 통해, 금주 SP의 확정구간 Open PO 값 업데이트
+        # 3-1) 확정 구간 중 이번주차의 Open PO 값 업데이트
         print(f'    3. {vendor}의 지난 주 기준 Open PO 를 계산하여 이번주 SP의 확정 구간의 PO값에 업데이트 합니다.')
         opo = get_open_po_at_certainweek(vendor, get_weekname_from(thisweek, -1))
-        c1 = (opo['RSD Week Name'] <= thisweek)
+        c1 = (opo['RSD Week Name'] <= thisweek) # PO의 RSD week가 이번주보다 같거나 작은 경우, 즉, 이번주에 해당하는 PO수량만 얻기 위해 필터링 조건임
         opo_th = opo[c1].pivot_table('Open_Qty', index=['Mapping Model.Suffix', 'Ship To'], columns='RSD Week Name', aggfunc=sum).sum(axis=1)
 
         for x, y in opo_th.index:
@@ -777,62 +778,62 @@ def correct_gscp_data(today, frozen, vendor_list, ver):
 
         print(f'    4. {vendor}의 조건에 따른 Real SP를 업데이트하고 엑셀 파일로 출력합니다.')
         for x, y in index_1:
-            t1 = sp.loc[(x, y, 'SP'), previous_weeklist].sum() - sp.loc[(x, y, 'SR'), previous_weeklist].sum()
-            t2 = sp.loc[(x, y, 'SP'), thisweek]
-            t3 = sp.loc[(x, y, 'PO'), thisweek]
-            if (t1 == 0):
+            t1 = sp.loc[(x, y, 'SP'), previous_weeklist].sum() - sp.loc[(x, y, 'SR'), previous_weeklist].sum() # 과거 주차들의 SP값과 SR값의 차이를 구한 값
+            t2 = sp.loc[(x, y, 'SP'), thisweek] # 이번주차의 SP 값
+            t3 = sp.loc[(x, y, 'PO'), thisweek] # 이번주차의 PO 값
+            if (t1 == 0): # 과거 주차들의 SP 값과 SR 값의 차이가 없을 때는 실제 SP는 SR값이 되도록 함
                 sp.loc[(x, y, 'Real_SP'), previous_weeklist] = sp.loc[(x, y, 'SR'), previous_weeklist]
-                sum_sp = sp.loc[(x, y, 'SP'), frozen_period].sum()
-                sum_po = sp.loc[(x, y, 'PO'), frozen_period].sum()
-                if sum_sp == sum_po:
-                    sp.loc[(x, y, 'Real_SP'), thisweek:] = sp.loc[(x, y, 'SP'), thisweek:]
-                    sp.loc[(x, y, 'Real_SP'), frozen_period] = sp.loc[(x, y, 'PO'), frozen_period]
-                else:
-                    sp.loc[(x, y, 'Real_SP'), thisweek:] = sp.loc[(x, y, 'SP'), thisweek:]
-                    reason = 'SP-PO is not matched in frozen period'
-                    for item in ['SP', 'PO']:
+                sum_sp = sp.loc[(x, y, 'SP'), frozen_period].sum() # 확정구간의 SP의 합계
+                sum_po = sp.loc[(x, y, 'PO'), frozen_period].sum() # 확정구간의 PO의 합계
+                if sum_sp == sum_po: # 확정 구간 SP와 PO 의 합이 같다면,
+                    sp.loc[(x, y, 'Real_SP'), thisweek:] = sp.loc[(x, y, 'SP'), thisweek:] # 실제 SP 는 SP 값으로 반영함
+                    reason = 'Normal Case'
+                    for item in ['SP', 'SR', 'PO', 'Real_SP']:
                         t4 = sp.loc[(x, y, item)]
                         t4.name = (reason, x, y, item)
                         df_t = df_t.append(t4)
-            elif (t1 > 0):
+                else: # 확정 구간 SP와 PO 의 값이 다른 경우라면,
+                    sp.loc[(x, y, 'Real_SP'), thisweek:] = sp.loc[(x, y, 'SP'), thisweek:]
+                    reason = 'SP-PO is not matched in frozen period'
+                    for item in ['SP', 'SR', 'PO', 'Real_SP']:
+                        t4 = sp.loc[(x, y, item)]
+                        t4.name = (reason, x, y, item)
+                        df_t = df_t.append(t4)
+            elif (t1 > 0): # 과거 주차들의 SP값이 SR 값보다 클 경우에는, 
                 reason = 'SP is greater than SR'
                 sp.loc[(x, y, 'Real_SP')] = sp.loc[(x, y, 'SP')]
-                for item in ['SP', 'SR', 'PO']:
+                for item in ['SP', 'SR', 'PO', 'Real_SP']:
                     t4 = sp.loc[(x, y, item)]
                     t4.name = (reason, x, y, item)
                     df_t = df_t.append(t4)  
-            elif (t1 < 0) & ((t1 + t2 - t3) == 0):
-                sp.loc[(x, y, 'Real_SP'), previous_weeklist] = sp.loc[(x, y, 'SR'), previous_weeklist]
-                sp.loc[(x, y, 'Real_SP'), thisweek] = t3
+            elif (t1 < 0) & ((t1 + t2 - t3) == 0): # 과거 주차들의 SR 값이 SP 값보다 크고, 그 큰 폭이 이번주차의 SP값에서 이번주차 SP에서 이번주차 PO값을 차감한 값과 동일하다면, 이런경우는 실제 선적했는데 GSCP는 선적을 못한 것으로 carry over한 경우임
+                sp.loc[(x, y, 'Real_SP'), previous_weeklist] = sp.loc[(x, y, 'SR'), previous_weeklist] # 과거주차의 실제 SP값은 SR 값으로 함
+                sp.loc[(x, y, 'Real_SP'), thisweek] = t3 # 이번주차의 실제 SP값은 이번주차의 PO 값으로 함
                 sum_sp = sp.loc[(x, y, 'SP'), frozen_period[1:]].sum()
                 sum_po = sp.loc[(x, y, 'PO'), frozen_period[1:]].sum()
                 if sum_sp == sum_po:
                     sp.loc[(x, y, 'Real_SP'), frozen_period[1]:] = sp.loc[(x, y, 'SP'), frozen_period[1]:]
-                    sp.loc[(x, y, 'Real_SP'), frozen_period[1:]] = sp.loc[(x, y, 'PO'), frozen_period[1:]]
+#                     sp.loc[(x, y, 'Real_SP'), frozen_period[1:]] = sp.loc[(x, y, 'PO'), frozen_period[1:]]
                 else:
                     sp.loc[(x, y, 'Real_SP'), frozen_period[1]:] = sp.loc[(x, y, 'SP'), frozen_period[1]:]
                     reason = 'SD input delay and SP-PO is not matched in frozen period'
-                    for item in ['SP', 'SR', 'PO']:
+                    for item in ['SP', 'SR', 'PO', 'Real_SP']:
                         t4 = sp.loc[(x, y, item)]
                         t4.name = (reason, x, y, item)
                         df_t = df_t.append(t4)
                     continue
                 reason = 'SD input delay'
-                for item in ['SP', 'SR', 'PO']:
+                for item in ['SP', 'SR', 'PO', 'Real_SP']:
                     t4 = sp.loc[(x, y, item)]
                     t4.name = (reason, x, y, item)
                     df_t = df_t.append(t4)
-            elif (t1 < 0) & ((t1 + t2 - t3) != 0):
+            elif (t1 < 0) & ((t1 + t2 - t3) != 0): # 과거 주차 SR 값이 SP 보다 큰데, 이번주차 SP에서 이번주차 PO값을 차감한 값과 다르다면, SP-PO의 동기화에 뭔가 문제가 있는 것으로 간주함
                 reason = 'Something wrong on SP-PO'
-                sum_sp = sp.loc[(x, y, 'SP'), previous_weeklist+frozen_period].sum()
-                sum_sr_po = sp.loc[(x, y, 'SR'), previous_weeklist].sum() + sp.loc[(x, y, 'PO'), frozen_period].sum()
+#                 sum_sp = sp.loc[(x, y, 'SP'), previous_weeklist+frozen_period].sum()
+#                 sum_sr_po = sp.loc[(x, y, 'SR'), previous_weeklist].sum() + sp.loc[(x, y, 'PO'), frozen_period].sum()
                 sp.loc[(x, y, 'Real_SP'), previous_weeklist] = sp.loc[(x, y, 'SR'), previous_weeklist]
-                if sum_sp == sum_sr_po:
-                    sp.loc[(x, y, 'Real_SP'), frozen_period] = sp.loc[(x, y, 'PO'), frozen_period]
-                    sp.loc[(x, y, 'Real_SP'), get_weekname_from(frozen_period[-1], 1):] = sp.loc[(x, y, 'SP'), get_weekname_from(frozen_period[-1], 1):]
-                else:
-                    sp.loc[(x, y, 'Real_SP'), thisweek:] = sp.loc[(x, y, 'SP'), thisweek:]
-                for item in ['SP', 'SR', 'PO']:
+                sp.loc[(x, y, 'Real_SP'), thisweek:] = sp.loc[(x, y, 'SP'), thisweek:]
+                for item in ['SP', 'SR', 'PO', 'Real_SP']:
                     t4 = sp.loc[(x, y, item)]
                     t4.name = (reason, x, y, item)
                     df_t = df_t.append(t4)
