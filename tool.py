@@ -858,17 +858,17 @@ def correct_gscp_data(today, frozen, vendor_list, ver):
     filename = f"W{week_num}_GSCP_SP_correction_{vendor_names}_{update_time}_{ver}.xlsx" #이번주 forecast 파일을 저장할 이름 설정
     with pd.ExcelWriter("D:/Shipment Plan/GSCP Data/"+filename) as writer:
         sp_total.to_excel(writer, sheet_name='SP Analysis', merge_cells=False)
-        abnormal_sp.to_excel(writer, sheet_name='abnormal SP list')
+        abnormal_sp.to_excel(writer, sheet_name='abnormal SP list', merge_cells=False)
 
-def get_sp_from_GSCP_DB(thisweek, ver, vendor):
+def get_sp_from_GSCP_DB(thisweek, ver, vendor, updated_ver=-1):
     with open('D:/Data/GSCP raw data.bin', 'rb') as f:
         gscp = pickle.load(f)
 
     c1 = (gscp['Ref'] == thisweek)
     c2 = (gscp['Ver'] == ver)
-    c3 = (gscp['From Site']) == vendor
-    max_value = gscp[c1 & c2 & c3]['Updated_at'].max()
-    c4 = (gscp['Updated_at'] == max_value)
+    c3 = (gscp['From Site'] == vendor)
+    updated_time = gscp[c1 & c2 & c3]['Updated_at'].unique()[updated_ver]
+    c4 = (gscp['Updated_at'] == updated_time)
     sp_thisweek = gscp[c1 & c2 & c3 & c4]
     sp_thisweek = sp_thisweek.groupby(['Mapping Model.Suffix', 'To Site']).sum().drop(columns='Frozen')
     sp_thisweek = sp_thisweek.loc[:, get_previous_weeklist(thisweek)[0]:]
