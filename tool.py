@@ -3,6 +3,7 @@ import numpy as np
 import os
 import re
 import datetime
+from dateutil.relativedelta import relativedelta
 from tkinter import *
 from tkinter import filedialog
 from mapping import *
@@ -19,6 +20,14 @@ import matplotlib.pyplot as plt
 from google.cloud import translate_v2 as translate
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = r'C:\Users\paul76.lee\folkloric-pier-362414-cf467b42237d.json'
+odm_model = re.compile(r'\b1\d[A-Z][A-Z]?\d\d[A-Z]-[A-Z]\.A\w{4,5}\b') # LG PC ODM 모델명의 정규표현식
+
+def check_model_name(name):
+    m = odm_model.match(name)
+    if m:
+        return True
+    else:
+        return m
 
 def getfirstdate_year(date):
     firstdayofweek = date - datetime.timedelta(days = date.isocalendar()[2] - 1)
@@ -910,37 +919,64 @@ def plot_forecast_change(df, name):
     plt.savefig('D:/figure/forecast_change_during_4weeks.png')
 
 def get_DPK_stock():
+    # DPK 재고의 가장 최신 재고의 산정 기준날짜 확인
     with open('D:/Data/DPK stock.bin', 'rb') as f:
         dpk_stock = pickle.load(f)
 
-    with open('D:/Data/Quanta Input Plan.bin', 'rb') as f:
-        pr = pickle.load(f)
+    # 재고 산정 기준 일자의 월부터 오늘날짜의 월까지의 Quanta의 월별 생산계획을 취합하기 위해 계산해야 할 월의 명단을 리스트로 만듬
+    stock_ref_date = dpk_stock['Ref_date'].max().date()
+    months = get_months_between_dates(stock_ref_date, datetime.date.today())
 
-    input_day = pr['Created_at'].max() # 최근일자의 생산계획 가져옴
-    print('DPK stock calculation based on latest Input Plan({})'.format(input_day))
-    pr = pr[pr['Created_at']==input_day]
-    stock_ref_date = dpk_stock['Ref_date'].max()
-    pr = pr[pr['Input Date'] >= stock_ref_date]
-    pr = pr.pivot_table('QTY', index=['Mapping Model.Suffix'], columns='LG Week', aggfunc='sum').fillna(0).reset_index()
+    # 취합할 생산계획 데이타프레임의 초기값을 빈 프레임으로 만들어 놓고 해당 월의 데이타를 누적시켜 생산계획을 취합함
+    pr = pd.DataFrame()
+    for target_month in months:
+        if datetime.datetime.strftime(target_month, '%Y-%m') == datetime.datetime.strftime(stock_ref_date, '%Y-%m'):
+            inp_plan = get_quanta_input_qty_by_month(target_month.year, target_month.month)
+            inp_plan = inp_plan[inp_plan['Input Date'].dt.month == target_month.month]
+            inp_plan = inp_plan[inp_plan['Input Date'] >= datetime.datetime.strftime(stock_ref_date, '%Y-%m-%d')]
+            pr = pd.concat([pr, inp_plan]).reset_index(drop=True)
+        else:
+            inp_plan = get_quanta_input_qty_by_month(target_month.year, target_month.month)
+            inp_plan = inp_plan[inp_plan['Input Date'].dt.month == target_month.month]
+            pr = pd.concat([pr, inp_plan]).reset_index(drop=True)
+
+    # 취합된 생산계획 데이타 프레임을 LG 주차별 생산계획 테이블로 전환하여  DPR의 OS 정보를 가져와 병합하여 OS별 생산계획으로 표현하고 여기에 DPK 기초 재고 정보도 추가함
     col = ['Model.Suffix', 'OS TYPE']
-    df_r = pr.merge(get_pdr()[col], left_on='Mapping Model.Suffix', right_on='Model.Suffix').drop(columns='Model.Suffix').groupby(['OS TYPE']).sum().reset_index()
-    df_r = pd.merge(df_r, dpk_stock, how='outer').fillna(0)
-    df_r = df_r.drop(columns='Ref_date')
-    df_r['MS P/N'] = df_r['OS TYPE'].map(dpk_map2)
+    pr_by_os = pr.pivot_table('QTY', index='Mapping Model.Suffix', columns='LG Week', aggfunc=sum).fillna(0).reset_index().merge(get_pdr()[col], left_on='Mapping Model.Suffix', right_on='Model.Suffix').drop(columns='Model.Suffix').groupby('OS TYPE').sum().reset_index()
 
+    dpk_stock = pd.merge(pr_by_os, dpk_stock, how='outer').fillna(0).drop(columns='Ref_date')
+    dpk_stock['MS P/N']= dpk_stock['OS TYPE'].map(dpk_map2)
+    dpk_stock
+    
+    # DPK PO 정보를 만들어 둠
     with open('D:/Data/DPK blanket PO DB.bin', 'rb') as f:
-        bpo = pickle.load(f)
+            bpo = pickle.load(f)
+    bpo = bpo.loc[bpo['LG PO Date'] > datetime.datetime.strftime(stock_ref_date, '%Y-%m-%d'), ('LG PO Date', 'MS P/N', 'Order Qty')].groupby(['LG PO Date', 'MS P/N']).sum()
+    bpo = bpo.reset_index()
+    bpo['LG Week'] = bpo['LG PO Date'].apply(get_weekname)
+    bpo_pv = bpo.pivot_table('Order Qty', index='MS P/N', columns='LG Week')
 
-    bpo = bpo.loc[bpo['LG PO Date'] > stock_ref_date, ('LG PO Date', 'MS P/N', 'Order Qty')].groupby(['LG PO Date', 'MS P/N']).sum()
+    col1 = ['OS'] * 2 + get_weeklist(dpk_stock) * 3
+    col2 = ['NAME', 'P/N'] + ['BOH'] * len(get_weeklist(dpk_stock)) + ['Input'] * len(get_weeklist(dpk_stock)) + ['DPK PO'] * len(get_weeklist(dpk_stock)) 
+    
+    # 각 주차별 생산/DPK 주문정보를 바탕으로 DPK 재고 정보를 계산함
+    dpk_stock_balance = pd.DataFrame(data=0, index=range(len(dpk_stock['OS TYPE'])), columns=[col1, col2])
+    dpk_stock_balance.loc[:, ('OS', 'NAME')] = dpk_stock['OS TYPE']
+    dpk_stock_balance.loc[:, ('OS', 'P/N')] = dpk_stock['MS P/N']
+    dpk_stock_balance.loc[:, (get_weeklist(dpk_stock)[0], 'BOH')] = dpk_stock['Stock']
+    for week in get_weeklist(dpk_stock):
+        dpk_stock_balance.loc[:, (week, 'Input')] = dpk_stock[week]
+    for pn in bpo_pv.index:
+        for week in bpo_pv.columns:
+            c1 = (dpk_stock_balance[('OS', 'P/N')] == pn)
+            dpk_stock_balance.loc[c1, (week, 'DPK PO')] = bpo_pv.loc[pn, week]
+    dpk_stock_balance = dpk_stock_balance.fillna(0).convert_dtypes()
 
-    for grp in bpo.groupby('LG PO Date'):
-        df_r = df_r.merge(grp[1].loc[grp[0]].reset_index(), how='left')
-        df_r.rename(columns={'Order Qty':f'Order Qty_on_'+grp[0].strftime('%y-%m-%d')}, inplace=True)
-
-    weeklist = get_weeklist(df_r)
-    df_r['Stock_End'] = df_r['Stock'] + df_r.loc[:, df_r.columns.str.contains('Order')].sum(axis=1) - df_r[weeklist].sum(axis=1)
-    df_r = df_r[~df_r['OS TYPE'].isin(['Chrome OS', 'NON-OS'])]
-    return pd.concat([df_r[['OS TYPE', 'MS P/N', 'Stock']], df_r.loc[:, df_r.columns.str.contains('Order')], df_r[weeklist], df_r['Stock_End']], axis=1)
+    for week in get_weeklist(dpk_stock)[1:]:
+        for dpk in dpk_stock['MS P/N'].dropna():
+            c1 = (dpk_stock_balance[('OS', 'P/N')] == dpk)
+            dpk_stock_balance.loc[c1, (week, 'BOH')] = dpk_stock_balance.loc[c1, (get_weekname_from(week, -1) , 'BOH')].iloc[0] - dpk_stock_balance.loc[c1, (get_weekname_from(week, -1), 'Input')].iloc[0] + dpk_stock_balance.loc[c1, (get_weekname_from(week, -1), 'DPK PO')].iloc[0]
+    return dpk_stock_balance.set_index([('OS', 'NAME'), ('OS', 'P/N')]).sort_index(axis=1)
 
 def get_quanta_boh(date): # 특정 날짜에 해당하는 월의 첫번째 주차 기준의 boh를 가져오는 함수
     with open('D:/Data/boh_db.bin', 'rb') as f:
@@ -956,3 +992,45 @@ def move_month(year, month, n):
             return d.year + (n // 12) + 1, (d.month + n) % 12
     else:
         return d.year + (n // 12) , (d.month + n) % 12
+
+def get_shipment_result(vendor, num):
+    with open(f'D:/Data/{vendor} shipment result DB.bin', 'rb') as f:
+        df = pickle.load(f)
+    week_name = get_weekname_from(get_weekname(datetime.date.today()), num)
+    return df[df['Week Name'] == week_name].pivot_table('Ship', index=['Country', 'BL No', 'BL Status', 'Series', 'Mapping Model.Suffix'], columns='Ship Date', aggfunc=sum).fillna(0).convert_dtypes()
+
+def get_months_between_dates(date1, date2):
+    """
+    date1과 date2 사이의 모든 월의 정보를 출력하는 함수
+    :param date1: datetime 객체. 시작 날짜
+    :param date2: datetime 객체. 종료 날짜
+    :return: datetime 객체 리스트. date1과 date2 사이의 모든 월
+    """
+
+    # date1과 date2 중에서 더 이른 날짜를 시작 날짜로 설정
+    if date1 > date2:
+        start_date = date2
+        end_date = date1
+    else:
+        start_date = date1
+        end_date = date2
+
+    # 시작 날짜의 월부터 종료 날짜의 월까지 datetime 객체 리스트 생성
+    current_month = start_date.replace(day=1)
+    end_month = end_date.replace(day=1)
+    months_between = []
+    while current_month <= end_month:
+        months_between.append(current_month)
+        current_month += relativedelta(months=1)
+
+    return months_between
+
+def get_quanta_input_qty_by_month(year, month):
+    with open('D:/Data/Quanta Input Plan.bin', 'rb') as f:
+        pr = pickle.load(f)
+    c1 = pd.to_datetime(pr['Created_at']).dt.year == year
+    c2 = pd.to_datetime(pr['Created_at']).dt.month == month
+    input_day = pr[c1 & c2]['Created_at'].max()
+    pr = pr[pr['Created_at'] == input_day]
+    return pr[pr['Input Date'].dt.month == month].reset_index(drop=True)
+
