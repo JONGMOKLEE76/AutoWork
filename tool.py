@@ -1034,3 +1034,11 @@ def get_quanta_input_qty_by_month(year, month):
     pr = pr[pr['Created_at'] == input_day]
     return pr[pr['Input Date'].dt.month == month].reset_index(drop=True)
 
+def get_sp_po_gap(vendor, confirm_period=4):
+    df = pd.read_excel(get_filename(), sheet_name='abnormal SP list')
+    df = df[df['From Site'] == vendor]
+    df['Series'] = df['Mapping Model.Suffix'].apply(lambda x:x.split('-')[0]).replace(srt_model)
+    confirm_weeks = [get_weekname_from(get_weekname(datetime.date.today()), i) for i in range(confirm_period)]
+    df = df[df['Category'].isin(['Real_SP', 'PO'])].groupby(['Series', 'Category']).sum()[confirm_weeks].unstack()
+    df.loc['SUM'] = df.sum()
+    return df
