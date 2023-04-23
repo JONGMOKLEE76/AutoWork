@@ -1,7 +1,2 @@
-.ipynb_checkpoints/[업데이트] ODM glop PO & Shipment result DB-checkpoint.ipynb
-.ipynb_checkpoints/[업데이트] ODM glop PO & Shipment result DB-checkpoint.ipynb
-.ipynb_checkpoints/[업데이트] Quanta Input plan DB-checkpoint.ipynb
-.ipynb_checkpoints/[업무활용] Quanta OTD result 구하기-checkpoint.ipynb
-.ipynb_checkpoints/[업무활용] Quanta 선적계획, PO 현황, 생산계획 현황 정리-checkpoint.ipynb
-__pycache__/mapping.cpython-39.pyc
-__pycache__/tool.cpython-39.pyc
+__pycache__/
+.ipynb_checkpoints/

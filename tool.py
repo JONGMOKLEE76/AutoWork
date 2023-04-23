@@ -21,6 +21,7 @@ from google.cloud import translate_v2 as translate
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = r'C:\Users\paul76.lee\folkloric-pier-362414-cf467b42237d.json'
 odm_model = re.compile(r'\b1\d[A-Z][A-Z]?\d\d[A-Z]-[A-Z]\.A\w{4,5}\b') # LG PC ODM 모델명의 정규표현식
+odm_sn = re.compile('^\d{3}[Q, P][C, G][A-Z]{2}\d{6}$|^\d{8}[Q, P][C, G][A-Z]{2}\d{6}$') # Quanta / Pegatron 모델의 S/N의 정규표현식
 
 def check_model_name(name):
     m = odm_model.match(name)
@@ -116,7 +117,7 @@ def get_PC_ODM_shipment_plan(filename, vendor_name, sheet):
     for key, val in df.dtypes.items(): # df의 dtype이 float 인 것을 int로 모두 변경
         if val == 'float64':
             p = re.compile('-\d\d-')
-            if p.search(key) != None:
+            if p.search(str(key)) != None:
                 df[key] = df[key].astype('int')
     return df
 
@@ -206,7 +207,7 @@ def cal_gap2(df1, df2, col_name):
 # 데이타프레임의 특정 컬럼값에 대해 grouping 한 결과를  월별로 합산한 결과를 계산하는 함수
 def monthly_sum(df, col_nm):
     new_df = pd.DataFrame(index=df.index)
-    df = category_sum(df.groupby(by=col_nm).sum())
+    df = category_sum(df.groupby(by=col_nm).sum(numeric_only=True))
     wk = get_pattern_from_list(df.columns, re.compile('-\d\d-'))
     col_list = sorted(list(set(df.columns) - set(wk)))
     df = df[col_list]
@@ -351,8 +352,11 @@ def get_difference_table(dataframe1, dataframe2, pattern):
 
     joined_col = list(set(df1.columns) | set(df2.columns))
     joined_col.sort()
-
-    df_diff_table = pd.DataFrame(data=0, index=set(df1.index)|set(df2.index), columns=joined_col).sort_index()
+    
+    m_index = list(set(df1.index)|set(df2.index))
+    if type(m_index[0]) == tuple:
+        m_index = pd.MultiIndex.from_tuples(m_index)
+    df_diff_table = pd.DataFrame(data=0, index=m_index, columns=joined_col).sort_index()
 
     for i in df_diff_table.index:
         for j in df_diff_table.columns:
@@ -879,7 +883,7 @@ def get_sp_from_GSCP_DB(thisweek, ver, vendor, updated_ver=-1):
     updated_time = gscp[c1 & c2 & c3]['Updated_at'].unique()[updated_ver]
     c4 = (gscp['Updated_at'] == updated_time)
     sp_thisweek = gscp[c1 & c2 & c3 & c4]
-    sp_thisweek = sp_thisweek.groupby(['Mapping Model.Suffix', 'To Site']).sum().drop(columns='Frozen')
+    sp_thisweek = sp_thisweek.groupby(['Mapping Model.Suffix', 'To Site']).sum(numeric_only=True).drop(columns='Frozen').sort_index(axis=1)
     sp_thisweek = sp_thisweek.loc[:, get_previous_weeklist(thisweek)[0]:]
 
     sp_thisweek['Sum'] = sp_thisweek.sum(axis=1)
@@ -889,7 +893,7 @@ def get_sp_from_GSCP_DB(thisweek, ver, vendor, updated_ver=-1):
     sp_thisweek = sp_thisweek.reset_index()
     sp_thisweek.insert(1, 'Country', sp_thisweek['To Site'].replace(site_map))
     sp_thisweek.insert(1, 'Region', sp_thisweek['Country'].replace(country_map))
-    if vendor in ['Quanta', 'Pegatron']:
+    if vendor in ['Quanta', 'Pegatron', 'Wingtech']:
         sp_thisweek.insert(0, 'Series', sp_thisweek['Mapping Model.Suffix'].apply(lambda x:x.split('-')[0]).replace(srt_model))
     return sp_thisweek
 
@@ -898,7 +902,7 @@ def make_forecast_change_for_certain_model(ref_point, period, model, ver, vendor
     ref_week = get_weekname_from(get_weekname(datetime.date.today()), ref_point)
     for n in range(0, -period, -1):
         week = get_weekname_from(ref_week, n)
-        df = category_sum(get_sp_from_GSCP_DB(week, ver, vendor).groupby('Series').sum())
+        df = category_sum(get_sp_from_GSCP_DB(week, ver, vendor).groupby('Series').sum(numeric_only=True))
         df.loc['Total'] = df.sum()
         sr = df.loc[model]
         df_rst[week] = sr
@@ -926,6 +930,7 @@ def get_DPK_stock():
     # 재고 산정 기준 일자의 월부터 오늘날짜의 월까지의 Quanta의 월별 생산계획을 취합하기 위해 계산해야 할 월의 명단을 리스트로 만듬
     stock_ref_date = dpk_stock['Ref_date'].max().date()
     months = get_months_between_dates(stock_ref_date, datetime.date.today())
+    dpk_stock = dpk_stock[dpk_stock['Ref_date'] == stock_ref_date.strftime('%Y-%m-%d')]
 
     # 취합할 생산계획 데이타프레임의 초기값을 빈 프레임으로 만들어 놓고 해당 월의 데이타를 누적시켜 생산계획을 취합함
     pr = pd.DataFrame()
@@ -942,7 +947,7 @@ def get_DPK_stock():
 
     # 취합된 생산계획 데이타 프레임을 LG 주차별 생산계획 테이블로 전환하여  DPR의 OS 정보를 가져와 병합하여 OS별 생산계획으로 표현하고 여기에 DPK 기초 재고 정보도 추가함
     col = ['Model.Suffix', 'OS TYPE']
-    pr_by_os = pr.pivot_table('QTY', index='Mapping Model.Suffix', columns='LG Week', aggfunc=sum).fillna(0).reset_index().merge(get_pdr()[col], left_on='Mapping Model.Suffix', right_on='Model.Suffix').drop(columns='Model.Suffix').groupby('OS TYPE').sum().reset_index()
+    pr_by_os = pr.pivot_table('QTY', index='Mapping Model.Suffix', columns='LG Week', aggfunc=sum).fillna(0).reset_index().merge(get_pdr()[col], left_on='Mapping Model.Suffix', right_on='Model.Suffix').drop(columns='Model.Suffix').groupby('OS TYPE').sum(numeric_only=True).reset_index()
 
     dpk_stock = pd.merge(pr_by_os, dpk_stock, how='outer').fillna(0).drop(columns='Ref_date')
     dpk_stock['MS P/N']= dpk_stock['OS TYPE'].map(dpk_map2)
@@ -951,7 +956,7 @@ def get_DPK_stock():
     # DPK PO 정보를 만들어 둠
     with open('D:/Data/DPK blanket PO DB.bin', 'rb') as f:
             bpo = pickle.load(f)
-    bpo = bpo.loc[bpo['LG PO Date'] > datetime.datetime.strftime(stock_ref_date, '%Y-%m-%d'), ('LG PO Date', 'MS P/N', 'Order Qty')].groupby(['LG PO Date', 'MS P/N']).sum()
+    bpo = bpo.loc[bpo['LG PO Date'] >= datetime.datetime.strftime(stock_ref_date, '%Y-%m-%d'), ('LG PO Date', 'MS P/N', 'Order Qty')].groupby(['LG PO Date', 'MS P/N']).sum()
     bpo = bpo.reset_index()
     bpo['LG Week'] = bpo['LG PO Date'].apply(get_weekname)
     bpo_pv = bpo.pivot_table('Order Qty', index='MS P/N', columns='LG Week')
@@ -1034,11 +1039,17 @@ def get_quanta_input_qty_by_month(year, month):
     pr = pr[pr['Created_at'] == input_day]
     return pr[pr['Input Date'].dt.month == month].reset_index(drop=True)
 
-def get_sp_po_gap(vendor, confirm_period=4):
-    df = pd.read_excel(get_filename(), sheet_name='abnormal SP list')
-    df = df[df['From Site'] == vendor]
+def get_sp_po_gap(vendor_list, confirm_period=5):
+    dir_path = 'D:/Shipment Plan/GSCP Data/'
+    list_of_files = [file for file in os.listdir(dir_path) if 'GSCP_SP_correction' in file]
+    fn = max([os.path.join(dir_path, filename) for filename in list_of_files], key=os.path.getctime)
+    df = pd.read_excel(fn, sheet_name='SP Analysis')
+    df = df[df['From Site'].isin(vendor_list)]
     df['Series'] = df['Mapping Model.Suffix'].apply(lambda x:x.split('-')[0]).replace(srt_model)
     confirm_weeks = [get_weekname_from(get_weekname(datetime.date.today()), i) for i in range(confirm_period)]
-    df = df[df['Category'].isin(['Real_SP', 'PO'])].groupby(['Series', 'Category']).sum()[confirm_weeks].unstack()
-    df.loc['SUM'] = df.sum()
+    df = df[df['Category'].isin(['Real_SP', 'PO'])].groupby(['Series', 'Mapping Model.Suffix', 'Category']).sum(numeric_only=True)[confirm_weeks].unstack()
+    df = df[~(df.sum(axis=1)==0)]
+    df[('SUM', 'PO')] = df.xs('PO', axis=1, level=1).sum(axis=1)
+    df[('SUM', 'Real_SP')] = df.xs('Real_SP', axis=1, level=1).sum(axis=1)
+    df[('SUM', 'GAP')] = df[('SUM', 'PO')] - df[('SUM', 'Real_SP')]
     return df
