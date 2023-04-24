@@ -1,5 +1,5 @@
 import streamlit as st
-from AutoWork.tool import *
+from tool import *
 
 st.header('Quanta PDR Search!')
 
