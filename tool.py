@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 from google.cloud import translate_v2 as translate
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = r'C:\Users\paul76.lee\folkloric-pier-362414-cf467b42237d.json'
-odm_model = re.compile(r'\b1\d[A-Z][A-Z]?\d\d[A-Z]-[A-Z]\.A\w{4,5}\b') # LG PC ODM 모델명의 정규표현식
+odm_model = re.compile(r'\b1\d[A-Z][A-Z]?\d\d[A-Z]-[A-Z]\.[A,C]\w{4,5}\b') # LG PC ODM 모델명의 정규표현식
 odm_sn = re.compile('^\d{3}[Q, P][C, G][A-Z]{2}\d{6}$|^\d{8}[Q, P][C, G][A-Z]{2}\d{6}$') # Quanta / Pegatron 모델의 S/N의 정규표현식
 
 def check_model_name(name):
