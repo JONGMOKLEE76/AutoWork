@@ -1,3 +1,5 @@
+import sys
+sys.path.append('C:\\Users\\paul76.lee\\AutoWork\\')
 import streamlit as st
 from tool import *
 

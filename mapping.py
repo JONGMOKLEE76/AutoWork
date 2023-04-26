@@ -46,7 +46,8 @@ vendor_find = {'11T50Q': 'Quanta',
 site_name_adjust_map = {'LG ELECTRONICS DEUTSCHLAND.GMBH.':'EEDG',
 'ECNT_P':'ECNT',
 'LG Electronics United Kingdom Ltd.':'EEUK',
-'ENUS_TX':'ENUS_V'
+'ENUS_TX':'ENUS_V',
+'LG Electronics India (PVT.) Ltd':'EAIL'
 }
 
 site_map = {'EEDG': 'Germany',
@@ -103,7 +104,7 @@ site_map = {'EEDG': 'Germany',
     'ESPS_US_DO':'Panama',
     'EEDG_NL':'Germany',
     'EMTK':'Turkey',
-    'ECNT_P': 'China'
+    'ECNT_P': 'China',
     }
 
 country_map = {

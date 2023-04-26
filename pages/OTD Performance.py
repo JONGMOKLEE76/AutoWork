@@ -1,3 +1,5 @@
+import sys
+sys.path.append('C:\\Users\\paul76.lee\\AutoWork\\')
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go

@@ -1,3 +1,5 @@
+import sys
+sys.path.append('C:\\Users\\paul76.lee\\AutoWork\\')
 import streamlit as st
 import time
 from tool import *
@@ -11,9 +13,11 @@ st.subheader('Welcome to LG Electronics PC ODM Dashboard Web pages.')
 st.subheader(f'Today is :red[{datetime.date.today().strftime("%Y-%m-%d-%a")}]')
 st.subheader(f'Now, you are in the week of  :red[{get_weekname(datetime.date.today())}]')
 
+with open('C:\\Users\\paul76.lee\\AutoWork\\openapikey.txt', 'r') as f:
+    key = f.read()
 
 # Load your API key from an environment variable or secret management service
-openai.api_key = "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"
+openai.api_key = key
 
 st.markdown('-----------')
 messages = []

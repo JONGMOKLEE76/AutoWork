@@ -133,7 +133,7 @@ def get_pdr():
         temp = pd.read_csv(file)
         pdr = pd.concat([pdr, temp])
     pdr.insert(0, 'Model', pdr['Model.Suffix'].apply(lambda x:x.split('-')[0]))
-    pdr.insert(0, 'Series', pdr['Model'].replace(srt_model))
+    pdr.insert(0, 'Series', pdr['Model.Suffix'].apply(lambda x:x.split('-')[0]).replace(srt_model))
     pdr.reset_index(inplace=True, drop=True)
     os.chdir('C:/Users/paul76.lee/')
     return pdr
