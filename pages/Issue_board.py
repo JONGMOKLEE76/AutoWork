@@ -2,8 +2,14 @@ import sys
 sys.path.append('C:\\Users\\paul76.lee\\AutoWork\\')
 import streamlit as st
 from tool import *
+pd.set_option('display.max_colwidth', None)
 
 st.title("🐞 ODM Biz Issue Report!")
+st.subheader('ODM Issue Status!')
+
+with open('D:/Data/issue_db.bin', 'rb') as f:
+    issue_db = pickle.load(f)
+st.table(issue_db)
 
 form = st.form(key="annotation")
 

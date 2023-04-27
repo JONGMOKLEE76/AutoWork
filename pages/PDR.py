@@ -15,7 +15,7 @@ def get_excel_file(df):
     excel_data = output.getvalue()
     return excel_data
 
-df = get_pdr().drop(columns=['Model', 'Marketing Spec.', 'PDR No.', 'Disabled Status', 'Grade', 'Product Variance', 'Project Code', 'Shipping Date', 'Production Type', 'Producing Center'])
+df = get_pdr().drop(columns=['Model', 'Bar Code', 'Marketing Spec.', 'PDR No.', 'Disabled Status', 'Grade', 'Product Variance', 'Project Code', 'Shipping Date', 'Production Type', 'Producing Center'])
 model_name = st.selectbox('Select Model', options=df['Series'].unique())
 
 if st.button('Search'):
