@@ -30,7 +30,7 @@ if submitted:
         issue_db = pickle.load(f)
     
     issue_data = {'Author':[author], 'Type':[issue_type], 'content':[comment], 'Date':[date], 'status':[status]}
-    issue_db = pd.concat([issue_db, pd.DataFrame(issue_data)])
+    issue_db = pd.concat([issue_db, pd.DataFrame(issue_data)]).reset_index(drop=True)
     
     with open('D:/Data/issue_db.bin', 'wb') as f:
         pickle.dump(issue_db, f)

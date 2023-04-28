@@ -16,10 +16,14 @@ def get_excel_file(df):
     return excel_data
 
 df = get_pdr().drop(columns=['Model', 'Bar Code', 'Marketing Spec.', 'PDR No.', 'Disabled Status', 'Grade', 'Product Variance', 'Project Code', 'Shipping Date', 'Production Type', 'Producing Center'])
-model_name = st.selectbox('Select Model', options=df['Series'].unique())
+col1, col2 = st.columns(2)
+with col1:
+    model = st.selectbox('Select Model', options=df['Series'].unique())
+with col2:
+    suffix = st.selectbox('Choose the Model.Suffix Name',options=df[df['Series']==model]['Model.Suffix'].unique())
 
 if st.button('Search'):
-    df = df[df['Series'] == model_name].reset_index(drop=True)
+    df = df[df['Series'] == model].reset_index(drop=True)
     st.dataframe(df)
 
     st.download_button(
@@ -28,3 +32,9 @@ if st.button('Search'):
         file_name='pdr.xlsx',
         mime='xlsx',
     )
+    st.header('FAI Spec Check!')
+    st.table(df[df['Model.Suffix']==suffix][['Sales Model.Suffix', 'BASE UNIT', 'KEYBOARD', 'ADAPTER', 'OS TYPE', 'ACCESSORY KIT', 'PACKING', 'CUSTOMER', 'USB MOUSE', 'Nation', 'Image ID']].T)
+
+
+
+    
