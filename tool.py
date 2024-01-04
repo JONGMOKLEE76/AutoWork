@@ -18,6 +18,8 @@ from tqdm import tqdm
 from pandas.api.types import CategoricalDtype
 import matplotlib.pyplot as plt
 from google.cloud import translate_v2 as translate
+import pyautogui
+import sys
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = r'C:\Users\paul76.lee\folkloric-pier-362414-cf467b42237d.json'
 odm_model = re.compile(r'\b1\d[A-Z][A-Z]?\d\d[A-Z]-[A-Z]\.[A,C]\w{4,5}\b') # LG PC ODM 모델명의 정규표현식
@@ -56,8 +58,7 @@ def get_weekname(date):
     firstdayofweek = date - datetime.timedelta(days = date.isocalendar()[2] - 1)
     return f"{firstdayofweek.year}-{firstdayofweek.month:02d}-{firstdayofweek.day:02d}(W{date.isocalendar()[1]:02d})"
 
-# 특정 컬럼 이름이 어떤 Dictionary에 속해 있을 때, 해당 Dictionary에 속해 있는 모든 컬럼의 값을 더하는 함수
-# 함수의 인자는 작업할 Dataframe
+# week이름으로 표시된 데이터프레임의 컬럼을 월별 합계로 변환하는 함수
 def category_sum(df):
     p = re.compile('-\d\d-')
     temp_df = pd.DataFrame(index=df.index)
@@ -357,6 +358,7 @@ def get_difference_table(dataframe1, dataframe2, pattern):
     if type(m_index[0]) == tuple:
         m_index = pd.MultiIndex.from_tuples(m_index)
     df_diff_table = pd.DataFrame(data=0, index=m_index, columns=joined_col).sort_index()
+    df_diff_table.index.names = df1.index.names
 
     for i in df_diff_table.index:
         for j in df_diff_table.columns:
@@ -369,8 +371,8 @@ def get_difference_table(dataframe1, dataframe2, pattern):
             except:
                 df2_value = 0
             df_diff_table.loc[i,j] = df1_value - df2_value
-    if len(df1_col) != 0:
-        df_diff_table.index.names = df1_col
+#     if len(df1_col) != 0:
+#         df_diff_table.index.names = df1_col
     return df_diff_table
 
 # 엑셀의 특정 PDR sheet 1개를 데이타프레임으로 변환
@@ -945,13 +947,20 @@ def get_DPK_stock():
             inp_plan = inp_plan[inp_plan['Input Date'].dt.month == target_month.month]
             pr = pd.concat([pr, inp_plan]).reset_index(drop=True)
 
+    i_num = [get_weekname_from(pr['LG Week'].min(), n) for n in range(0, 30)].index(pr['LG Week'].max())
+    cols = [get_weekname_from(pr['LG Week'].min(), n) for n in range(0, 30)][:i_num+1]
+    pr_by_os = pd.DataFrame(0, index=pr['Mapping Model.Suffix'].unique(), columns=cols)
+    pr = pr.pivot_table('QTY', index='Mapping Model.Suffix', columns='LG Week', aggfunc=sum).fillna(0)
+    for model in pr.index:
+        for week in pr.columns:
+            pr_by_os.loc[model, week] = pr.loc[model, week]
+    pr_by_os.index.name = 'Mapping Model.Suffix'
     # 취합된 생산계획 데이타 프레임을 LG 주차별 생산계획 테이블로 전환하여  DPR의 OS 정보를 가져와 병합하여 OS별 생산계획으로 표현하고 여기에 DPK 기초 재고 정보도 추가함
     col = ['Model.Suffix', 'OS TYPE']
-    pr_by_os = pr.pivot_table('QTY', index='Mapping Model.Suffix', columns='LG Week', aggfunc=sum).fillna(0).reset_index().merge(get_pdr()[col], left_on='Mapping Model.Suffix', right_on='Model.Suffix').drop(columns='Model.Suffix').groupby('OS TYPE').sum(numeric_only=True).reset_index()
+    pr_by_os = pr_by_os.reset_index().merge(get_pdr()[col], left_on='Mapping Model.Suffix', right_on='Model.Suffix').drop(columns='Model.Suffix').groupby('OS TYPE').sum(numeric_only=True).reset_index()
 
     dpk_stock = pd.merge(pr_by_os, dpk_stock, how='outer').fillna(0).drop(columns='Ref_date')
     dpk_stock['MS P/N']= dpk_stock['OS TYPE'].map(dpk_map2)
-    dpk_stock
     
     # DPK PO 정보를 만들어 둠
     with open('D:/Data/DPK blanket PO DB.bin', 'rb') as f:
@@ -988,15 +997,14 @@ def get_quanta_boh(date): # 특정 날짜에 해당하는 월의 첫번째 주�
         boh_quanta = pickle.load(f)
     return boh_quanta[boh_quanta['Ref'] == get_weeklist_for_certain_month(date.year, get_month_from_date(date))[0]].reset_index(drop=True)
 
-def move_month(year, month, n):
-    d = datetime.date(year, month, 1)
-    if n // 12 < 0:
-        if d.month + n < 0:
-            return d.year + (n // 12), (d.month + n) % 12
-        else:
-            return d.year + (n // 12) + 1, (d.month + n) % 12
+def move_month(year, month, jump):
+    year = year + ((month-1) + jump)//12
+    month = (month + jump) % 12
+    if month != 0:
+        month
     else:
-        return d.year + (n // 12) , (d.month + n) % 12
+        month = 12
+    return year, month
 
 def get_shipment_result(vendor, num):
     with open(f'D:/Data/{vendor} shipment result DB.bin', 'rb') as f:
@@ -1047,9 +1055,207 @@ def get_sp_po_gap(vendor_list, confirm_period=5):
     df = df[df['From Site'].isin(vendor_list)]
     df['Series'] = df['Mapping Model.Suffix'].apply(lambda x:x.split('-')[0]).replace(srt_model)
     confirm_weeks = [get_weekname_from(get_weekname(datetime.date.today()), i) for i in range(confirm_period)]
-    df = df[df['Category'].isin(['Real_SP', 'PO'])].groupby(['Series', 'Mapping Model.Suffix', 'Category']).sum(numeric_only=True)[confirm_weeks].unstack()
+    df = df[df['Category'].isin(['Real_SP', 'PO'])].groupby(['Series', 'Mapping Model.Suffix', 'To Site', 'Category']).sum(numeric_only=True)[confirm_weeks].unstack()
     df = df[~(df.sum(axis=1)==0)]
     df[('SUM', 'PO')] = df.xs('PO', axis=1, level=1).sum(axis=1)
     df[('SUM', 'Real_SP')] = df.xs('Real_SP', axis=1, level=1).sum(axis=1)
     df[('SUM', 'GAP')] = df[('SUM', 'PO')] - df[('SUM', 'Real_SP')]
     return df
+
+def get_boh_nextweek(boh_thisweek, thisweek):
+    search_month = str(datetime.date.fromisoformat(thisweek[:10]).isocalendar().year) + str(get_month_from_date(datetime.date.fromisoformat(thisweek[:10]))).zfill(2)
+
+    with open('D:/Data/Quanta Input Plan.bin', 'rb') as f:
+        input_df = pickle.load(f)
+
+    final_input_date = input_df[input_df['Created_at'].apply(lambda x:x.strftime('%Y%m')).isin([search_month])]['Created_at'].max()
+    input_df = input_df[(input_df['Created_at']==final_input_date) & (input_df['LG Week'] == thisweek)]
+
+    with open('D:/Data/Quanta shipment result DB.bin', 'rb') as f:
+        sr = pickle.load(f)
+    sr = sr[sr['Week Name']==thisweek]
+
+    boh_nextweek = boh_thisweek.merge(input_df.groupby('Mapping Model.Suffix')['QTY'].sum().reset_index(), how='outer').merge(sr.groupby('Mapping Model.Suffix')['Ship'].sum().reset_index(), how='outer').fillna(0)
+    boh_nextweek['BOH'] = boh_nextweek['BOH'] + boh_nextweek['QTY'] - boh_nextweek['Ship']
+    return boh_nextweek[boh_nextweek['BOH'] > 0].drop(['QTY', 'Ship'], axis=1).reset_index(drop=True)
+
+def update_glop_shipment():
+    filepath = 'D:/Downloads/' + [file for file in os.listdir('D:/Downloads/') if 'poshThru' in file][-1] # 파일이름에 poshThru가 들어가는 파일 중에 가장 최신 파일을 선택함
+    df = pd.read_excel(filepath, sheet_name='DataSet').iloc[:, :48]
+
+    if df['Model'][0].split('.')[0] == 'PH30N':
+        vendor = 'Wanlida'
+    else:
+        vendor = df['Model'].apply(lambda x:x.split('-')[0]).replace(srt_model).replace(vendor_find)[0]
+
+    if vendor not in ['Quanta', 'Pegatron', 'Wanlida', 'Wingtech']:
+        sys.exit()
+
+    df = df[['Model', 'PO No.', 'Ship To', 'Shipping', 'Cancel', 'PO', 'OQC Report', 'OQC Date', 'OQC Result', 'Ship', 'Issued Date', 'RSD','Ship Date', 'BL No', 'BL Status', 'Method', 'Price Term', 'Unit Price', 'Currency', 'Payment Term', 'PO1 No', 'SO No.', 'Final Destination']]
+    df.loc[df['PO1 No'].notnull(), 'PO1 No'] = df.loc[df['PO1 No'].notnull(),'PO1 No'].astype('int').astype('str')
+    df.loc[df['SO No.'].notnull(), 'SO No.'] = df.loc[df['SO No.'].notnull(), 'SO No.'].astype('int').astype('str')
+    df[['OQC Date', 'PO1 No', 'SO No.', 'Final Destination']] = df[['OQC Date', 'PO1 No', 'SO No.', 'Final Destination']].fillna('-')
+
+    df['Ship'].fillna(0, inplace=True)
+    df['Ship'] = df['Ship'].astype('int')
+    df['Issued Date'] = pd.to_datetime(df['Issued Date'])
+    df['PO Week'] = df['Issued Date'].dt.isocalendar().week.apply(lambda x:'{0:02d}'.format(x))
+    df['PO Month'] = df['Issued Date'].apply(get_month_from_date)
+    df['PO Year'] = df['Issued Date'].dt.isocalendar().year
+    df['RSD'] = pd.to_datetime(df['RSD']) # PO의 RSD를 Datetime 형식으로 변경
+    df['RSD Week'] = df['RSD'].dt.isocalendar().week.apply(lambda x:'{0:02d}'.format(x))
+    df['RSD Month'] = df['RSD'].apply(get_month_from_date)
+    df['RSD Year'] = df['RSD'].dt.isocalendar().year
+    df['RSD Week Year'] = df['RSD'].apply(getfirstdate_year)
+    df['RSD Week Month'] = df['RSD'].apply(getfirstdate_month)
+    df['RSD Week Day'] = df['RSD'].apply(getfirstdate_day)
+    df['RSD Week Name'] = df['RSD Week Year'].astype(str) + '-' + df['RSD Week Month'].astype(str) + '-' + df['RSD Week Day'].astype(str) + '(W' + df['RSD Week'].astype(str) +')'
+    df.rename(columns={'Model':'Mapping Model.Suffix'}, inplace=True)
+
+    if vendor != 'Wanlida':
+        df['Model'] = df['Mapping Model.Suffix'].apply(lambda x: x.split('-')[0])
+        df['Series'] = df['Model'].replace(srt_model)
+
+    df['Ship To'] = df['Ship To'].replace(site_name_adjust_map)
+    df['Country'] = df['Ship To'].replace(site_map)
+    df['Region'] = df['Country'].replace(country_map)
+
+    if vendor != 'Wanlida':
+        df1 = df.groupby(['PO No.', 'Cancel', 'Issued Date', 'PO Year', 'PO Month', 'PO Week', 'Region', 'Country', 'Series', 'Model',
+                            'Mapping Model.Suffix', 'Ship To', 'RSD', 'RSD Year', 'RSD Month', 'RSD Week', 'RSD Week Name', 'Method',
+                            'Price Term', 'Unit Price', 'Currency', 'Payment Term', 'PO1 No', 'SO No.',
+                            'Final Destination'])[['PO']].sum().reset_index().set_index('PO No.')
+    else:
+        df1 = df.groupby(['PO No.', 'Cancel', 'Issued Date', 'PO Year', 'PO Month', 'PO Week', 'Region', 'Country',
+                        'Mapping Model.Suffix', 'Ship To', 'RSD', 'RSD Year', 'RSD Month', 'RSD Week', 'RSD Week Name', 'Method',
+                        'Price Term', 'Unit Price', 'Currency', 'Payment Term', 'PO1 No', 'SO No.',
+                        'Final Destination'])[['PO']].sum().reset_index().set_index('PO No.')  
+
+    with open(f'D:/Data/{vendor} PO DB.bin', 'rb') as f:
+        PO_df = pickle.load(f)
+    PO_df1 = PO_df.copy()
+    prev_po = PO_df.shape[0]
+    for i in df1.index:
+        PO_df.loc[i, :] = df1.loc[i, :]
+    updated_po = PO_df.shape[0]
+    with open(f'D:/Data/{vendor} PO DB.bin', 'wb') as f:
+        pickle.dump(PO_df, f)
+    # DB backup 폴더에도 저장
+    with open(f'D:/Data/DB backup/{vendor} PO DB.bin', 'wb') as f:
+        pickle.dump(PO_df, f)
+
+    with open(f'D:/Data/{vendor} shipment result DB.bin', 'rb') as f:
+        SR_df = pickle.load(f)
+
+    df = df[df['Ship Date'].notnull()]
+    df['Ship Date'] = pd.to_datetime(df['Ship Date'])
+    df['Ship Week'] = df['Ship Date'].dt.isocalendar().week.apply(lambda x:'{0:02d}'.format(x))
+    df['Ship Month'] = df['Ship Date'].apply(get_month_from_date)
+    df['Ship Year'] = df['Ship Date'].dt.isocalendar().year
+    df['Ship Week month'] = df['Ship Date'].apply(getfirstdate_month)
+    df['Ship Week day'] = df['Ship Date'].apply(getfirstdate_day)
+    df['Ship Week year'] = df['Ship Date'].apply(getfirstdate_year)
+    df['Ship Week year'] = df['Ship Week year'].astype(str)
+    df['Ship Week month'] = df['Ship Week month'].astype(str)
+    df['Ship Week day'] = df['Ship Week day'].astype(str)
+    df['Ship Week'] = df['Ship Week'].astype(str)
+    df['Week Name'] = df['Ship Week year'] + '-' + df['Ship Week month'] + '-' + df['Ship Week day'] + '(W' + df['Ship Week'] + ')'
+    df = df.set_index(['PO No.', 'BL No'])
+    SR_df1 = SR_df.copy()
+    prev_sr = SR_df.shape[0]
+    for i in df.index:
+        SR_df.loc[i, :] = df.loc[i, :]
+    updated_sr = SR_df.shape[0]
+
+    # PO 대비 선적수량이 더 많은 경우가 없는지 check
+    with open(f'D:/Data/{vendor} PO DB.bin', 'rb') as f:
+        PO = pickle.load(f)
+    with open(f'D:/Data/{vendor} shipment result DB.bin', 'rb') as f:
+        SR = pickle.load(f)
+
+    PO = PO[PO['Cancel']=='N']
+    df = pd.concat([PO['PO'], SR.groupby('PO No.')['Ship'].sum()], axis=1)
+    df.fillna(0, inplace=True)
+    df['Open'] = df['PO'] - df['Ship']
+    df = df[df['Open'] < 0]
+    if df.shape[0] != 0:
+        print(df)
+        sys.exit()
+    with open(f'D:/Data/{vendor} shipment result DB.bin', 'wb') as f:
+        pickle.dump(SR_df, f)
+    with open(f'D:/Data/DB backup/{vendor} shipment result DB.bin', 'wb') as f:
+        pickle.dump(SR_df, f)
+    print(f"{vendor}의 DB를 업데이트 하였습니다. PO는 {updated_po - prev_po} 건, 선적은 {updated_sr - prev_sr} 건 추가 되었습니다. ")
+    print(filepath)
+
+    print('추가된 PO 현황입니다.')
+    print(PO_df.drop(index=PO_df1.index).pivot_table('PO', index=['PO No.', 'Mapping Model.Suffix',  'Country'], columns='RSD Week Name', aggfunc=sum)) # 추가된 PO 리스트
+    print('추가된 선적 현황입니다.')
+    print(SR_df.drop(index=SR_df1.index).pivot_table('Ship', index=['Country', 'BL No', 'Mapping Model.Suffix', 'PO No.'], columns=['Week Name', 'Ship Date'], aggfunc='sum').fillna(0)) # 추가된 선적실적
+
+def download_excel_on_GLOPP_at_PT(vendor):
+    pyautogui.click(444, 23) # 주소 표시줄 클릭
+    pyautogui.sleep(0.3)
+    pyautogui.typewrite('glopp.lge.com/index.jsp', interval=0.1)
+    pyautogui.press('enter', presses=2, interval=1)
+    pyautogui.sleep(1)
+    while not pyautogui.pixelMatchesColor(868, 619, (255, 255, 255)):  # GLOPP 최초 로그인 후 초기 정보 로딩까지 대기
+        pyautogui.sleep(1)
+    pyautogui.moveTo(926, 592, duration=1)
+    pyautogui.click(1613, 121, duration=0.2) # 업체 선택 dropdown 메뉴 클릭
+    pyautogui.moveTo(1715, 160, duration=0.5) # scroll bar를 클릭
+
+    if vendor == 'Pegatron PC':
+        pyautogui.dragRel(0, 30, duration=0.3) # scroll bar를 내림
+        pyautogui.click(1550, 179, duration=0.2) # Pegatron PC 선택
+    elif vendor == 'Pegatron Thin Client':
+        pyautogui.dragRel(0, 30, duration=0.3) # scroll bar를 내림
+        pyautogui.click(1551, 198, duration=0.2) # Pegatron Thin Client 선택
+    elif vendor == 'Quanta':
+        pyautogui.dragRel(0, 40, duration=0.3) # scroll bar를 내림
+        pyautogui.click(1511, 189, duration=0.2) # Quanta 선택
+    elif vendor == 'Wingtech':
+        pyautogui.dragRel(0, 60, duration=0.3) # scroll bar를 내림
+        pyautogui.click(1530, 223, duration=0.2) # Wingtech 선택
+    elif vendor == 'TCL MOKA':
+        Point(x=1539, y=196)
+        pyautogui.dragRel(0, 50, duration=0.3) # scroll bar를 내림
+        pyautogui.click(1550, 159, duration=0.2) # TCL MOKA 선택
+
+    pyautogui.sleep(1)
+    while not pyautogui.pixelMatchesColor(899, 905, (255, 255, 255)):  # 업체 선택 후 조회될때까지
+        pyautogui.sleep(1)
+    pyautogui.moveTo(613, 82, duration=0.5) # Shipping & Invoicing 선택
+    pyautogui.click(610, 121, duration=0.5) # Shipping & Invoicing 하위 메뉴 선택
+    pyautogui.sleep(1)
+    while not pyautogui.pixelMatchesColor(276, 1407, (255, 255, 255)):  # Shipping & Invoicing 메뉴로 전환될 때까지
+        pyautogui.sleep(1)
+    pyautogui.click(1884, 186, duration=0.1)
+    pyautogui.press('enter')
+    print('GLOP에서 파일 다운로드를 시작합니다.')
+    while not pyautogui.pixelMatchesColor(1350, 58, (74, 74, 74)):  # 파일 다운로드 완료될 때까지
+        pyautogui.sleep(1)
+
+def get_tcl_boh(target_week):
+    with open('D:/Data/TCL PP_result.bin', 'rb') as f:
+        ppr = pickle.load(f)
+    models = ppr['Mapping Model.Suffix'].unique()
+    
+    with open('D:/Data/ODM_SR.db', 'rb') as f:
+        sr = pickle.load(f)
+        sr = sr.loc['OS_TCL_CN_P']
+
+    sr['Week Name'] = sr['Ship Date'].map(get_weekname)
+    sr = sr[['Mapping Model.Suffix', 'Ship', 'Week Name']].reset_index(drop=True)
+    sr = sr.groupby(['Mapping Model.Suffix','Week Name']).sum('Ship').reset_index()
+    c1 = sr['Mapping Model.Suffix'].isin(models)
+    c2 = sr['Week Name'] < target_week
+
+    ppr['Week Name'] = ppr['PP Date'].map(get_weekname)
+    ppr = ppr.groupby(['Mapping Model.Suffix', 'Rep PMS', 'TCL BOM', 'Week Name']).sum('QTY').reset_index()
+    c3 = ppr['Mapping Model.Suffix'].isin(models)
+    c4 = ppr['Week Name'] < target_week
+    boh = ppr[c3 & c4].groupby(['Mapping Model.Suffix', 'Rep PMS', 'TCL BOM']).sum('QTY').reset_index().merge(sr[c1 & c2].groupby('Mapping Model.Suffix').sum('Ship').reset_index(), how='outer').fillna(0)
+    boh = boh.rename(columns={'QTY':'PP'})
+    boh['BOH'] = boh['PP'] - boh['Ship']
+    return boh

@@ -24,8 +24,8 @@ vendor = st.radio('Choose the vendor', options=['Pegatron', 'Quanta', 'Wingtech'
 df = df[df['From Site'] == vendor]
 
 startweek = st.selectbox('Choose the start week you want search', options=df['Ref'].sort_values(ascending=False).unique()) # 금주 이후 몇주 동안의 변동을 조회할 지 설정
-search_window = st.number_input('How long the width of window you want to see?', min_value=1, max_value=50, value=20, step=1) # 금주 이후 몇주 동안의 변동을 조회할 지 설정
-period = st.number_input('How many weeks do you want to keep track from the starting week?', min_value=1, max_value=20, value=10, step=1) # 미래 몇주 간의 변동을 조회할 지 설정
+search_window = st.number_input('How long the width of window you want to see?', min_value=1, max_value=52, value=20, step=1) # 금주 이후 몇주 동안의 변동을 조회할 지 설정
+period = st.number_input('How many weeks do you want to keep track from the starting week?', min_value=1, max_value=52, value=10, step=1) # 미래 몇주 간의 변동을 조회할 지 설정
 ver = st.radio('Choose the version', options=['ODM Release', 'Final', 'Latest']) # 물동 변동을 조회할 version 설정(Latest, Final, ODM Release)
 model_names = st.multiselect('Select the model name you want to see. If you want to see all model, do NOT choose', options=df['Mapping Model.Suffix'].apply(lambda x:x.split('-')[0]).replace(srt_model).unique()) # Forecast 변동을 조회할 모델 설정(.로 하면 모든 모델)
 site_names = st.multiselect('Select the site name you want to see. If you want to see all country, do NOT choose', options=df['To Site'].unique())
